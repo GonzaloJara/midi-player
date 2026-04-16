@@ -4,6 +4,7 @@ import * as Tone from 'tone'
 import Soundfont from 'soundfont-player'
 import PianoRoll from './PianoRoll.jsx'
 import { GM_INSTRUMENTS, gmDisplayName } from './gmInstruments.js'
+import { DEMO_SONGS } from './demoSongs.js'
 import './App.css'
 
 const ZOOM_STEP  = 1.25
@@ -170,6 +171,26 @@ export default function App() {
     }, duration + 0.2)
   }, [midi, duration, activeTracks, stopAllInstruments])
 
+  // ── Demo loader ───────────────────────────────────────────────────────────
+  const loadDemo = useCallback(async (demo) => {
+    Tone.Transport.stop()
+    Tone.Transport.cancel()
+    stopAllInstruments()
+    cancelAnimationFrame(animFrameRef.current)
+    seekPosRef.current = 0
+    setIsPlaying(false)
+    setCurrentTime(0)
+    setFileName(`⏳ Loading ${demo.name}…`)
+    try {
+      const midiData = await demo.getMidi()
+      setMidi(midiData)
+      setFileName(demo.name)
+    } catch (err) {
+      console.error('Failed to load demo:', err)
+      setFileName('⚠️ Load failed')
+    }
+  }, [stopAllInstruments])
+
   // ── File loading ──────────────────────────────────────────────────────────
   const handleFileLoad = useCallback(async (e) => {
     const file = e.target.files[0]
@@ -322,10 +343,32 @@ export default function App() {
           <span className="time-total">{fmt(duration)}</span>
         </div>
 
-        <label className="load-btn">
-          Load MIDI
-          <input type="file" accept=".mid,.midi" onChange={handleFileLoad} style={{ display: 'none' }} />
-        </label>
+        <div className="load-controls">
+          <label className="load-btn">
+            Load MIDI
+            <input type="file" accept=".mid,.midi" onChange={handleFileLoad} style={{ display: 'none' }} />
+          </label>
+          <select
+            className="demo-select"
+            value=""
+            onChange={e => {
+              const demo = DEMO_SONGS.find(d => d.id === e.target.value)
+              if (demo) loadDemo(demo)
+            }}
+          >
+            <option value="" disabled>Demos ▾</option>
+            {(() => {
+              const groups = [...new Set(DEMO_SONGS.map(d => d.group || 'Other'))]
+              return groups.map(g => (
+                <optgroup key={g} label={g}>
+                  {DEMO_SONGS.filter(d => (d.group || 'Other') === g).map(d => (
+                    <option key={d.id} value={d.id}>{d.emoji} {d.name}</option>
+                  ))}
+                </optgroup>
+              ))
+            })()}
+          </select>
+        </div>
 
         {fileName && <span className="file-name">{fileName}</span>}
       </header>
@@ -380,9 +423,40 @@ export default function App() {
           />
         ) : (
           <div className="empty-state">
-            <div className="empty-icon">&#119070;</div>
-            <p>Load a MIDI file to get started</p>
-            <p className="empty-sub">Supports .mid and .midi files</p>
+            <div className="empty-icon">🎹</div>
+            <h2 className="empty-title">MIDI Piano Roll</h2>
+            <p className="empty-sub">Visualize and play MIDI files with GM soundfonts</p>
+
+            <label className="load-btn load-btn--hero">
+              📁 Load from Computer
+              <input type="file" accept=".mid,.midi" onChange={handleFileLoad} style={{ display: 'none' }} />
+            </label>
+
+            <div className="demo-divider"><span>or try a demo</span></div>
+
+            <div className="demo-library">
+              {(() => {
+                const groups = [...new Set(DEMO_SONGS.map(d => d.group || 'Other'))]
+                return groups.map(g => (
+                  <div key={g} className="demo-group">
+                    <div className="demo-group-label">{g}</div>
+                    <div className="demo-grid">
+                      {DEMO_SONGS.filter(d => (d.group || 'Other') === g).map(demo => (
+                        <button
+                          key={demo.id}
+                          className="demo-card"
+                          onClick={() => loadDemo(demo)}
+                        >
+                          <span className="demo-card-emoji">{demo.emoji}</span>
+                          <span className="demo-card-name">{demo.name}</span>
+                          <span className="demo-card-desc">{demo.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              })()}
+            </div>
           </div>
         )}
       </main>
