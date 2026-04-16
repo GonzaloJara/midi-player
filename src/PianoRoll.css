@@ -1,0 +1,119 @@
+.piano-roll {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  background: #0d0d14;
+}
+
+/* ── Fixed left column (corner + piano keys) ── */
+.keys-column {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-right: 1px solid #2a2a44;
+  background: #111118;
+  overflow: hidden;
+}
+
+/* Blank corner that aligns with the timeline ruler */
+.keys-corner {
+  flex-shrink: 0;
+  background: #08080f;
+  border-bottom: 1px solid #2a2a44;
+}
+
+/* ── Piano keys scroll mirror (no visible scrollbar) ── */
+.keys-scroll-area {
+  overflow: hidden;   /* hides scrollbar; JS still sets scrollTop */
+  flex: 1;
+  display: block;
+}
+
+/* ── Scrollable piano roll area ── */
+.roll-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.roll-scroll::-webkit-scrollbar       { width: 8px; height: 8px; }
+.roll-scroll::-webkit-scrollbar-track { background: #0d0d14; }
+.roll-scroll::-webkit-scrollbar-thumb { background: #2a2a44; border-radius: 4px; }
+.roll-scroll::-webkit-scrollbar-thumb:hover { background: #3a3a60; }
+
+/* ── Inner container (full song width × full height) ── */
+.roll-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Timeline ruler ── */
+.timeline-canvas {
+  display: block;
+  cursor: col-resize;
+  flex-shrink: 0;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+/* ── Playhead ── */
+.playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, #ff6b6b, #ff4757);
+  box-shadow: 0 0 8px #ff475766, 0 0 2px #ff4757;
+  pointer-events: none;
+  z-index: 10;
+  transform: translateX(-1px);
+}
+
+/* Triangle cap at the top of the playhead */
+.playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #ff6b6b;
+}
+
+/* ── Roll canvas cursors ── */
+.roll-canvas--seek    { cursor: col-resize; }
+.roll-canvas--preview { cursor: crosshair; }
+
+.timeline-canvas--preview {
+  cursor: default;
+}
+
+/* ── Preview scrub line ── */
+.preview-line {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  /* Dashed white line using a repeating gradient */
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.75) 0px,
+    rgba(255, 255, 255, 0.75) 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  pointer-events: none;
+  z-index: 9;
+  transform: translateX(-0.5px);
+  transition: background 0.05s;
+}
+
+/* Solid bright line when mouse is held */
+.preview-line--active {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+}
