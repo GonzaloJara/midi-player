@@ -51,6 +51,15 @@ export const GM_INSTRUMENTS = [
   'helicopter','applause','gunshot',
 ]
 
+// The 16 General MIDI instrument families, in order. Each spans 8 program
+// numbers (family index × 8). Used to group the instrument picker dropdown.
+export const GM_FAMILY_LABELS = [
+  'Piano', 'Chromatic Percussion', 'Organ', 'Guitar',
+  'Bass', 'Strings', 'Ensemble', 'Brass',
+  'Reed', 'Pipe', 'Synth Lead', 'Synth Pad',
+  'Synth Effects', 'Ethnic', 'Percussive', 'Sound Effects',
+]
+
 // Human-readable display name (spaces instead of underscores, title-case)
 export const gmDisplayName = (programNumber) => {
   const raw = GM_INSTRUMENTS[programNumber] ?? 'acoustic_grand_piano'

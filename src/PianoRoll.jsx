@@ -24,7 +24,7 @@ const noteName   = (m) => NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1)
 export default function PianoRoll({
   midi, currentTime, duration, onSeek, isPreviewMode,
   hZoom, vZoom, onHZoomChange, onVZoomChange,
-  noteNameMode,
+  noteNameMode, mutedTracks, mutedDisplay,
 }) {
   const rollCanvasRef     = useRef(null)
   const keysCanvasRef     = useRef(null)
@@ -158,14 +158,20 @@ export default function PianoRoll({
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke()
     }
 
-    // Notes — body + accents
+    // Notes — body + accents. Muted tracks are dimmed, or skipped when
+    // mutedDisplay is 'hide'.
+    const hideMuted = mutedDisplay === 'hide'
     for (const note of notes) {
+      const isMuted = mutedTracks?.has(note.trackIndex)
+      if (isMuted && hideMuted) continue
+
       const x     = (PADDING_SEC + note.time) * pxPerSec
       const y     = (maxNote - note.midi) * noteH
       const w     = Math.max(note.duration * pxPerSec - 1, 2)
       const h     = Math.max(noteH - 1, 1)
       const color = TRACK_COLORS[note.trackIndex % TRACK_COLORS.length]
 
+      ctx.globalAlpha = isMuted ? 0.22 : 1
       ctx.fillStyle = color + 'bb'
       ctx.fillRect(x, y + 1, w, h - 1)
       ctx.fillStyle = color
@@ -173,6 +179,7 @@ export default function PianoRoll({
       ctx.fillStyle = '#ffffffcc'
       ctx.fillRect(x, y + 1, Math.min(2, w), h - 1)
     }
+    ctx.globalAlpha = 1
 
     // Note name labels (second pass so they're always on top)
     if (noteNameMode && noteNameMode !== 'off') {
@@ -182,6 +189,8 @@ export default function PianoRoll({
       ctx.textBaseline = 'middle'
 
       for (const note of notes) {
+        if (mutedTracks?.has(note.trackIndex) && hideMuted) continue
+
         const x = (PADDING_SEC + note.time) * pxPerSec
         const y = (maxNote - note.midi) * noteH
         const w = Math.max(note.duration * pxPerSec - 1, 2)
@@ -204,7 +213,7 @@ export default function PianoRoll({
         ctx.restore()
       }
     }
-  }, [notes, noteRange, maxNote, noteH, safeDur, secPerBeat, pxPerSec, noteNameMode])
+  }, [notes, noteRange, maxNote, noteH, safeDur, secPerBeat, pxPerSec, noteNameMode, mutedTracks, mutedDisplay])
 
   // ── Draw: piano keys ──────────────────────────────────────────────────────
   const drawKeys = useCallback(() => {
@@ -339,19 +348,26 @@ export default function PianoRoll({
   // ── Timeline seek: click + drag ───────────────────────────────────────────
   const timelineDragging = useRef(false)
 
+  // Clicking the ruler snaps the playhead to the start of the clicked bar
+  // (one "pattern" = 4 beats, matching the bar numbers drawn on the timeline).
+  const seekToBarAt = useCallback((clientX) => {
+    if (!onSeek) return
+    const rect   = timelineCanvasRef.current.getBoundingClientRect()
+    const time   = (clientX - rect.left) / pxPerSec - PADDING_SEC
+    const barDur = 4 * secPerBeat
+    onSeek(Math.max(0, Math.floor((time + 1e-4) / barDur) * barDur))
+  }, [onSeek, pxPerSec, secPerBeat])
+
   const handleTimelineMouseDown = useCallback((e) => {
     if (isPreviewMode) return
     timelineDragging.current = true
-    if (!onSeek) return
-    const rect = timelineCanvasRef.current.getBoundingClientRect()
-    onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec - PADDING_SEC))
-  }, [onSeek, isPreviewMode, pxPerSec])
+    seekToBarAt(e.clientX)
+  }, [isPreviewMode, seekToBarAt])
 
   const handleTimelineDragMove = useCallback((e) => {
-    if (!timelineDragging.current || !onSeek || isPreviewMode) return
-    const rect = timelineCanvasRef.current.getBoundingClientRect()
-    onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec - PADDING_SEC))
-  }, [onSeek, isPreviewMode, pxPerSec])
+    if (!timelineDragging.current || isPreviewMode) return
+    seekToBarAt(e.clientX)
+  }, [isPreviewMode, seekToBarAt])
 
   const handleTimelineDragEnd = useCallback(() => { timelineDragging.current = false }, [])
 
@@ -370,7 +386,9 @@ export default function PianoRoll({
 
   const scrubNotesAt = useCallback(async (time) => {
     const synth        = await ensurePreviewSynth()
-    const hitting      = notes.filter(n => n.time <= time && n.time + n.duration > time)
+    const hitting      = notes.filter(n =>
+      n.time <= time && n.time + n.duration > time && !mutedTracks?.has(n.trackIndex)
+    )
     const desiredNames = new Set(hitting.map(n => n.name))
     const desiredMidis = new Set(hitting.map(n => n.midi))
 
@@ -382,7 +400,7 @@ export default function PianoRoll({
 
     previewActiveRef.current = desiredNames
     setPreviewActiveMidi(desiredMidis)
-  }, [notes, ensurePreviewSynth])
+  }, [notes, ensurePreviewSynth, mutedTracks])
 
   const stopAllPreviewNotes = useCallback(() => {
     previewSynthRef.current?.releaseAll()

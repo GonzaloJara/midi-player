@@ -251,10 +251,39 @@
   background: #17172a;
   border: 1px solid #2a2a44;
   border-radius: 6px;
-  padding: 3px 8px 3px 6px;
+  padding: 3px 8px 3px 4px;
   flex-shrink: 0;
-  max-width: 180px;
+  max-width: 200px;
 }
+
+.track-chip--muted { opacity: 0.5; }
+
+.muted-display-toggle {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: #17172a;
+  border: 1px solid #2a2a44;
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #8080c0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.muted-display-toggle:hover { border-color: #3a3a60; color: #a0a0e0; }
+
+.track-chip-mute {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.track-chip-mute:hover { background: #2a2a44; }
 
 .track-chip-dot {
   width: 8px;
@@ -267,6 +296,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  gap: 1px;
 }
 
 .track-chip-name {
@@ -276,18 +306,22 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 130px;
+  max-width: 140px;
 }
 
-.track-chip-inst {
+.track-chip-select {
   font-size: 9px;
-  color: #6060a0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: #8080c0;
+  background: #0f0f1c;
+  border: 1px solid #2a2a44;
+  border-radius: 3px;
+  padding: 1px 2px;
+  max-width: 140px;
+  cursor: pointer;
+  font-family: inherit;
 }
-
-.track-chip-inst.loading { color: #4040a0; font-style: italic; }
+.track-chip-select:hover { border-color: #3a3a60; color: #a0a0e0; }
+.track-chip-select:focus { outline: none; border-color: #5050a0; }
 
 /* Loading spinner */
 .track-chip-spinner {

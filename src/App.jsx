@@ -3,7 +3,8 @@ import { Midi } from '@tonejs/midi'
 import * as Tone from 'tone'
 import Soundfont from 'soundfont-player'
 import PianoRoll from './PianoRoll.jsx'
-import { GM_INSTRUMENTS, gmDisplayName } from './gmInstruments.js'
+import { GM_INSTRUMENTS, gmDisplayName, GM_FAMILY_LABELS } from './gmInstruments.js'
+import { createDrumKit } from './drumKit.js'
 import { DEMO_SONGS } from './demoSongs.js'
 import './App.css'
 
@@ -28,11 +29,19 @@ export default function App() {
   // Soundfont loading state
   const [loadingInstruments, setLoadingInstruments] = useState(false)
   const [loadedPrograms, setLoadedPrograms]         = useState(new Set())
+  // Per-track user overrides, keyed by the track's original index in midi.tracks:
+  //   { muted: bool, programOverride: number | null }
+  // A programOverride lets a track (including the drum channel) play a chosen
+  // GM instrument instead of being silent / using its embedded program.
+  const [trackSettings, setTrackSettings] = useState({})
+  // How muted tracks appear in the roll: 'dim' (faint) or 'hide' (not drawn).
+  const [mutedDisplay, setMutedDisplay] = useState('dim')
 
   const synthRef        = useRef(null)   // fallback PolySynth
   const animFrameRef    = useRef(null)
   const seekPosRef      = useRef(0)
   const instrumentsRef  = useRef({})     // { programNumber → Soundfont instrument }
+  const drumKitRef      = useRef(null)   // synthesized GM drum kit
 
   const NOTE_NAME_CYCLE = { off: 'american', american: 'solfege', solfege: 'off' }
   const NOTE_NAME_LABEL = { off: '♩', american: 'ABC', solfege: 'Do' }
@@ -52,30 +61,61 @@ export default function App() {
       .filter(({ track }) => track.notes.length > 0)
   }, [midi])
 
-  // ── Load soundfonts whenever MIDI changes ─────────────────────────────────
+  // ── Per-track helpers ──────────────────────────────────────────────────────
+  // Effective GM program for a track: the user's override if set, else the
+  // track's own program. Percussion tracks have no program of their own, so
+  // they only become audible once the user picks an override (returns null).
+  const effectiveProgram = useCallback((track, originalIndex) => {
+    const override = trackSettings[originalIndex]?.programOverride
+    if (override != null) return override
+    return track.instrument.percussion ? null : track.instrument.number
+  }, [trackSettings])
+
+  // Original indices of tracks the user has muted (also used to dim the roll).
+  const mutedTracks = useMemo(() => {
+    const s = new Set()
+    for (const i of Object.keys(trackSettings))
+      if (trackSettings[i]?.muted) s.add(Number(i))
+    return s
+  }, [trackSettings])
+
+  // Reset overrides when a new file/demo loads.
+  useEffect(() => { setTrackSettings({}) }, [midi])
+
+  // Drop cached instruments when the MIDI changes (loading effect refills them).
   useEffect(() => {
-    if (!midi) { instrumentsRef.current = {}; return }
+    instrumentsRef.current = {}
+    setLoadedPrograms(new Set())
+  }, [midi])
+
+  // Sorted list of GM programs that any track currently needs a soundfont for.
+  // Keyed string so the loading effect only re-runs when the *set* changes
+  // (e.g. picking an instrument for the drum track), not on mute toggles.
+  const neededPrograms = useMemo(() => {
+    const set = new Set()
+    for (const { track, originalIndex } of activeTracks) {
+      const prog = effectiveProgram(track, originalIndex)
+      if (prog != null) set.add(prog)
+    }
+    return [...set].sort((a, b) => a - b).join(',')
+  }, [activeTracks, effectiveProgram])
+
+  // ── Load soundfonts for any program not yet cached ────────────────────────
+  useEffect(() => {
+    if (!midi || !neededPrograms) return
+
+    const programs = neededPrograms.split(',').map(Number)
+    const toLoad   = programs.filter(p => !(p in instrumentsRef.current))
+    if (!toLoad.length) return
 
     setLoadingInstruments(true)
-    setLoadedPrograms(new Set())
-    instrumentsRef.current = {}
-
     const ac = Tone.getContext().rawContext
 
-    // Collect unique program numbers from non-percussion tracks with notes
-    const programs = [
-      ...new Set(
-        activeTracks
-          .filter(({ track: t }) => !t.instrument.percussion)
-          .map(({ track: t }) => t.instrument.number)
-      )
-    ]
-
     let cancelled = false
-    const loaded = new Set()
+    const loaded = new Set(loadedPrograms)
 
     Promise.allSettled(
-      programs.map(async (prog) => {
+      toLoad.map(async (prog) => {
         const name = GM_INSTRUMENTS[prog] ?? 'acoustic_grand_piano'
         try {
           const inst = await Soundfont.instrument(ac, name, {
@@ -104,7 +144,24 @@ export default function App() {
     })
 
     return () => { cancelled = true }
-  }, [midi]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [midi, neededPrograms]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Track control handlers ─────────────────────────────────────────────────
+  const toggleMute = useCallback((originalIndex) => {
+    setTrackSettings(prev => ({
+      ...prev,
+      [originalIndex]: { ...prev[originalIndex], muted: !prev[originalIndex]?.muted },
+    }))
+  }, [])
+
+  const setProgramOverride = useCallback((originalIndex, value) => {
+    // value is '' (clear override) or a program number as a string
+    const programOverride = value === '' ? null : Number(value)
+    setTrackSettings(prev => ({
+      ...prev,
+      [originalIndex]: { ...prev[originalIndex], programOverride },
+    }))
+  }, [])
 
   // ── Fallback PolySynth ────────────────────────────────────────────────────
   const ensureSynth = () => {
@@ -115,6 +172,11 @@ export default function App() {
         volume: -12,
       }).toDestination()
     }
+  }
+
+  // ── Synthesized drum kit (for the GM percussion channel) ──────────────────
+  const ensureDrumKit = () => {
+    if (!drumKitRef.current) drumKitRef.current = createDrumKit()
   }
 
   const startAnimLoop = useCallback(() => {
@@ -138,10 +200,21 @@ export default function App() {
     Tone.Transport.cancel()
     if (!midi) return
 
-    for (const { track } of activeTracks) {
-      if (track.instrument.percussion) continue  // skip drum channel for now
+    for (const { track, originalIndex } of activeTracks) {
+      if (mutedTracks.has(originalIndex)) continue        // user-muted
 
-      const prog = track.instrument.number
+      const prog = effectiveProgram(track, originalIndex)
+
+      // Percussion track with no melodic override → synthesized drum kit
+      if (prog == null) {
+        ensureDrumKit()
+        for (const note of track.notes) {
+          Tone.Transport.schedule((time) => {
+            drumKitRef.current?.play(note.midi, time, note.velocity)
+          }, note.time)
+        }
+        continue
+      }
 
       for (const note of track.notes) {
         Tone.Transport.schedule((time) => {
@@ -169,7 +242,7 @@ export default function App() {
       setCurrentTime(0)
       setIsPlaying(false)
     }, duration + 0.2)
-  }, [midi, duration, activeTracks, stopAllInstruments])
+  }, [midi, duration, activeTracks, stopAllInstruments, mutedTracks, effectiveProgram])
 
   // ── Demo loader ───────────────────────────────────────────────────────────
   const loadDemo = useCallback(async (demo) => {
@@ -229,6 +302,19 @@ export default function App() {
       startAnimLoop()
     }
   }, [midi, isPlaying, scheduleNotes, startAnimLoop, stopAllInstruments])
+
+  // Spacebar toggles play/pause (unless typing in a form control)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code !== 'Space' && e.key !== ' ') return
+      const tag = e.target?.tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return
+      e.preventDefault()  // stop page scroll / activating a focused button
+      handlePlayPause()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handlePlayPause])
 
   const handleStop = useCallback(() => {
     Tone.Transport.stop()
@@ -377,33 +463,55 @@ export default function App() {
       {midi && activeTracks.length > 0 && (
         <div className="track-strip">
           {activeTracks.map(({ track, originalIndex }) => {
-            const color   = TRACK_COLORS[originalIndex % TRACK_COLORS.length]
-            const prog    = track.instrument.number
-            const isPerc  = track.instrument.percussion
-            const isReady = isPerc || loadedPrograms.has(prog)
-            const label   = track.name || track.instrument.name || `Track ${originalIndex + 1}`
-            const instLabel = isPerc
-              ? 'Drums'
-              : isReady
-                ? gmDisplayName(prog)
-                : loadingInstruments
-                  ? 'Loading…'
-                  : gmDisplayName(prog)
+            const color    = TRACK_COLORS[originalIndex % TRACK_COLORS.length]
+            const isPerc   = track.instrument.percussion
+            const settings = trackSettings[originalIndex]
+            const muted    = !!settings?.muted
+            const override = settings?.programOverride ?? null
+            const prog     = effectiveProgram(track, originalIndex)  // null ⇒ drum kit
+            const isReady  = prog == null || loadedPrograms.has(prog)
+            const label    = track.name || track.instrument.name || `Track ${originalIndex + 1}`
+            // Select value: '' = no override (perc → drum kit, melodic → embedded program)
+            const selectValue = override != null ? String(override) : String(prog ?? '')
             return (
-              <div key={originalIndex} className="track-chip">
+              <div key={originalIndex} className={`track-chip ${muted ? 'track-chip--muted' : ''}`}>
+                <button
+                  className="track-chip-mute"
+                  onClick={() => toggleMute(originalIndex)}
+                  title={muted ? 'Unmute track' : 'Mute track'}
+                >{muted ? '🔇' : '🔊'}</button>
                 <div className="track-chip-dot" style={{ background: color }} />
                 <div className="track-chip-text">
                   <span className="track-chip-name">{label}</span>
-                  <span className={`track-chip-inst ${!isReady && loadingInstruments ? 'loading' : ''}`}>
-                    {instLabel}
-                  </span>
+                  <select
+                    className="track-chip-select"
+                    value={selectValue}
+                    onChange={e => setProgramOverride(originalIndex, e.target.value)}
+                    title={isPerc ? 'Drum track — drum kit, or pick a melodic instrument' : 'Change instrument'}
+                  >
+                    {isPerc && <option value="">🥁 Drum kit</option>}
+                    {GM_FAMILY_LABELS.map((fam, fi) => (
+                      <optgroup key={fam} label={fam}>
+                        {Array.from({ length: 8 }, (_, k) => fi * 8 + k).map(p => (
+                          <option key={p} value={p}>{gmDisplayName(p)}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                 </div>
-                {!isPerc && !isReady && loadingInstruments && (
+                {!isReady && loadingInstruments && (
                   <span className="track-chip-spinner" />
                 )}
               </div>
             )
           })}
+          {mutedTracks.size > 0 && (
+            <button
+              className="muted-display-toggle"
+              onClick={() => setMutedDisplay(m => (m === 'dim' ? 'hide' : 'dim'))}
+              title="Toggle how muted tracks appear in the roll"
+            >{mutedDisplay === 'dim' ? '◐ Muted: dimmed' : '○ Muted: hidden'}</button>
+          )}
         </div>
       )}
 
@@ -420,6 +528,8 @@ export default function App() {
             onHZoomChange={(z) => setHZoom(clampH(z))}
             onVZoomChange={(z) => setVZoom(clampV(z))}
             noteNameMode={noteNameMode}
+            mutedTracks={mutedTracks}
+            mutedDisplay={mutedDisplay}
           />
         ) : (
           <div className="empty-state">
